@@ -1,5 +1,5 @@
-# V4L2_FFmpeg
 
+# V4L2+FFmpeg
 编译：
 g++ viode.cc -o test     $(pkg-config --cflags --libs libavcodec libavformat libavutil)     -lpthread
 
@@ -163,3 +163,14 @@ V4L2 内核缓冲区
     av_write_trailer(fmt_ctx) 写文件尾（修正 moov 等）
     avio_closep(&fmt_ctx->pb) 关闭文件
      释放所有 FFmpeg 资源
+
+# ALSA+ffmpeg
+基本流程
+获得原始音频 PCM
+采集卡/麦克风 → 原始 PCM 数据（即 WAV 里的“内容”）。
+编码音频
+PCM 送入音频编码器 → 输出压缩格式，如 AAC、MP3（开发中更常用 AAC）。
+编码视频
+图像帧送入视频编码器 → 输出 H.264 / H.265 压缩视频流。
+封装
+将 AAC 音频流 + H.264 视频流 按 MP4 格式规范混合写入文件。
