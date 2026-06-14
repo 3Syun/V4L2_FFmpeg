@@ -163,7 +163,7 @@ void* encoder_thread(void* args){
         fprintf(stderr, "找不到 H.264 编码器\n");
         return NULL;
     }
-    AVCodecContext *ctx = avcodec_alloc_context3(codec);//分配并初始化运行上下文，保存编解码过程中的状态
+    AVCodecContext *ctx = avcodec_alloc_context3(codec);//为指定的编码器分配并初始化运行上下文，保存编解码过程中的状态
     if(!ctx){
         fprintf(stderr, "无法分配编码上下文\n");
         return NULL;  
@@ -171,12 +171,13 @@ void* encoder_thread(void* args){
     ctx->width = WIDTH;
     ctx->height =HEIGHT;
     ctx->pix_fmt = AV_PIX_FMT_NV12;
-    ctx->time_base = (AVRational){1, 1000000};  // 微秒时间基，与 PTS 单位一致
+    ctx->time_base = (AVRational){1, 1000000};  // 微秒时间基，与 PTS 单位一致：pts 转换为秒：pts * time_base
     ctx->framerate = (AVRational){30, 1};
     ctx->bit_rate = 1000000;      // 1 Mbps，可按需调整
     ctx->gop_size = 30;
-    av_opt_set(ctx->priv_data, "preset", "ultrafast", 0);
-    av_opt_set(ctx->priv_data, "tune", "zerolatency", 0);
+    //不要任何延迟，速度越快越好，宁可码率稍高、文件稍大，也绝不能耽误采集
+    av_opt_set(ctx->priv_data, "preset", "ultrafast", 0);//提供最快编码预设
+    av_opt_set(ctx->priv_data, "tune", "zerolatency", 0);//完全禁止 B 帧，让帧立刻输出
     if (avcodec_open2(ctx, codec, NULL) < 0) {
         fprintf(stderr, "打开编码器失败\n");
         avcodec_free_context(&ctx);
@@ -201,6 +202,7 @@ void* encoder_thread(void* args){
     }
     //初始化MP4封装器
     AVFormatContext *fmt_ctx = NULL;
+    //创建一个用于输出/写入的格式上下文
     if (avformat_alloc_output_context2(&fmt_ctx, NULL, "mp4", "test.mp4") < 0 || !fmt_ctx) {
         fprintf(stderr, "无法创建 MP4 输出上下文\n");
         fclose(fout);
@@ -217,15 +219,18 @@ void* encoder_thread(void* args){
     }
     //将编码器参数复制到流
     avcodec_parameters_from_context(video_st->codecpar, ctx);
-    video_st->time_base = ctx->time_base;
+    video_st->time_base = (AVRational){1, 90000};
     //打开输出文件并写头部
     if (avio_open(&fmt_ctx->pb, "test.mp4", AVIO_FLAG_WRITE) < 0) {
+        //打开文件 test.mp4，并创建一个 AVIOContext，将其赋值给 fmt_ctx->pb
+        //所有读写（如写文件头、写数据包）都通过 fmt_ctx->pb 完成
         fprintf(stderr, "无法打开 test.mp4\n");
         avformat_free_context(fmt_ctx);
         fclose(fout);
         avcodec_free_context(&ctx);
         return NULL;
     }
+    //将 MP4 容器的文件头写入输出文件
     if (avformat_write_header(fmt_ctx, NULL) < 0) {
         fprintf(stderr, "写 MP4 文件头失败\n");
         avio_closep(&fmt_ctx->pb);
@@ -272,6 +277,7 @@ void* encoder_thread(void* args){
             fwrite(pkt->data, 1, pkt->size, fout);
             //写入mp4文件
             pkt->stream_index = video_st->index;
+            av_packet_rescale_ts(pkt, ctx->time_base, video_st->time_base);
             if (av_interleaved_write_frame(fmt_ctx, pkt) < 0) {
                 fprintf(stderr, "写入 MP4 失败\n");
             }
@@ -286,6 +292,7 @@ void* encoder_thread(void* args){
         if (ret >= 0) {
             fwrite(pkt->data, 1, pkt->size, fout);
             pkt->stream_index = video_st->index;
+            av_packet_rescale_ts(pkt, ctx->time_base, video_st->time_base);
             av_interleaved_write_frame(fmt_ctx, pkt);
             av_packet_unref(pkt);
         }
